@@ -148,6 +148,10 @@ class _ShellState extends State<DroidHarnessShell> {
   final _bridge = _BridgeService();
   String? _modelsDir;
   Map? _nativeHw;
+  bool _engineInstalled = false;
+  bool _engineDownloading = false;
+  bool _engineDownloadFailed = false;
+  String _engineError = '';
 
   @override
   void initState() {
@@ -166,8 +170,10 @@ class _ShellState extends State<DroidHarnessShell> {
     try {
       final hw = await _channel.invokeMethod<Map<dynamic, dynamic>>('getHardwareProfile');
       if (hw != null && mounted) {
-        setState(() => _nativeHw = Map<String, dynamic>.from(hw));
-        // Marca modelo recomendado
+        setState(() {
+          _nativeHw = Map<String, dynamic>.from(hw);
+          _engineInstalled = hw['engineInstalled'] == true || hw['llamaServerInstalled'] == true;
+        });
         final recId = hw['recommendedModelId']?.toString() ?? '';
         for (final m in kModels) {
           m.recommended = m.id == recId;
@@ -176,6 +182,45 @@ class _ShellState extends State<DroidHarnessShell> {
       final dir = await _channel.invokeMethod<String>('getModelsDir');
       if (dir != null && mounted) setState(() => _modelsDir = dir);
     } catch (_) {}
+  }
+
+  Future<void> _downloadEngine() async {
+    setState(() {
+      _engineDownloading = true;
+      _engineDownloadFailed = false;
+      _engineError = '';
+    });
+    try {
+      final result = await _channel.invokeMethod<String>('downloadEngine');
+      if (result != null && result.isNotEmpty && mounted) {
+        setState(() {
+          _engineInstalled = true;
+          _engineDownloading = false;
+        });
+      } else if (mounted) {
+        setState(() {
+          _engineDownloading = false;
+          _engineDownloadFailed = true;
+          _engineError = 'Engine download returned empty';
+        });
+      }
+    } on PlatformException catch (e) {
+      if (mounted) {
+        setState(() {
+          _engineDownloading = false;
+          _engineDownloadFailed = true;
+          _engineError = e.message ?? 'Download failed';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _engineDownloading = false;
+          _engineDownloadFailed = true;
+          _engineError = e.toString();
+        });
+      }
+    }
   }
 
   static const _channel = MethodChannel('dev.droidharness/bridge');
@@ -221,7 +266,10 @@ class _ShellState extends State<DroidHarnessShell> {
       ),
       body: _tab == 0 ? _ModelList(
         bridge: _bridge, nativeHw: _nativeHw, modelsDir: _platformDir(),
+        engineInstalled: _engineInstalled, engineDownloading: _engineDownloading,
+        engineDownloadFailed: _engineDownloadFailed, engineError: _engineError,
         onChat: () => setState(() => _tab = 1),
+        onDownloadEngine: _downloadEngine,
       ) : _ChatView(
         bridge: _bridge, onBack: () => setState(() => _tab = 0)),
       bottomNavigationBar: NavigationBar(
@@ -263,11 +311,19 @@ class _ModelList extends StatelessWidget {
   final _BridgeService bridge;
   final Map? nativeHw;
   final String modelsDir;
+  final bool engineInstalled;
+  final bool engineDownloading;
+  final bool engineDownloadFailed;
+  final String engineError;
   final VoidCallback onChat;
+  final VoidCallback onDownloadEngine;
 
   const _ModelList({
     required this.bridge, required this.nativeHw,
-    required this.modelsDir, required this.onChat,
+    required this.modelsDir,
+    required this.engineInstalled, required this.engineDownloading,
+    required this.engineDownloadFailed, required this.engineError,
+    required this.onChat, required this.onDownloadEngine,
   });
 
   @override
@@ -321,53 +377,61 @@ class _ModelList extends StatelessWidget {
             ),
           ),
 
-        // Bridge offline warning
-        if (!bridgeOk && !bridge.connecting)
+        // Engine download card (Edge Gallery style)
+        if (!engineInstalled)
           Container(
             margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Palette.error.withAlpha(15),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Palette.error.withAlpha(40)),
+              color: Palette.card,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Palette.teal.withAlpha(40)),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.info_outline, size: 18, color: Palette.error),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Para rodar o modelo, inicie o bridge no Termux',
-                          style: TextStyle(fontSize: 12, color: Palette.error)),
-                      const SizedBox(height: 2),
-                      Text('cd ~/droid-harness && bash scripts/start-termux-bridge.sh',
-                          style: TextStyle(fontSize: 11, fontFamily: 'monospace',
-                              color: Palette.error.withAlpha(150))),
-                    ],
+                Row(children: [
+                  Icon(Icons.settings, size: 20, color: Palette.teal),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text('Motor de inferência',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onSurface))),
+                ]),
+                const SizedBox(height: 8),
+                Text(engineDownloadFailed
+                    ? 'Falha ao baixar: $engineError'
+                    : engineDownloading
+                        ? 'Baixando llama.cpp para Android ARM64...'
+                        : 'O llama.cpp pré-compilado será baixado '
+                            '(~15MB). O S25 Ultra com Snapdragon '
+                            'roda via CPU com aceleração Vulkan.',
+                    style: TextStyle(fontSize: 12,
+                        color: engineDownloadFailed
+                            ? Palette.error
+                            : Theme.of(context).colorScheme.onSurface.withAlpha(180))),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: engineDownloading ? null : onDownloadEngine,
+                    icon: engineDownloading
+                        ? const SizedBox(width: 16, height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : Icon(engineDownloadFailed
+                            ? Icons.refresh : Icons.download, size: 16),
+                    label: Text(engineDownloading
+                        ? 'Baixando... (~15MB)'
+                        : engineDownloadFailed
+                            ? 'Tentar novamente'
+                            : 'Baixar motor de inferência'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Palette.tealDark,
+                      minimumSize: const Size.fromHeight(42),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
                   ),
                 ),
-              ],
-            ),
-          ),
-
-        // Download info banner
-        if (bridge.connecting)
-          Container(
-            margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Palette.teal.withAlpha(15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                const SizedBox(width: 16, height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2)),
-                const SizedBox(width: 10),
-                Text('Conectando ao bridge...',
-                    style: TextStyle(fontSize: 12, color: Palette.teal)),
               ],
             ),
           ),
