@@ -3,28 +3,101 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
-void main() {
-  runApp(const DroidHarnessApp());
+// ═══════════════════════════════════════════════════════════════════
+//  Droid Harness Mobile v1.4.0 — Google AI Edge Gallery style
+// ═══════════════════════════════════════════════════════════════════
+//
+//  Screens:  ModelList (home) → Chat (when model online)
+//            Terminal (drawer/bottom sheet)
+//  Design:   Material 3 Dark, teal #80cbc4 seed
+//            Drawer navigation: Models | Chat | Terminal
+//  Bridge:   Auto-retry 25x, session + profile on connect
+// ═══════════════════════════════════════════════════════════════════
+
+void main() => runApp(const DroidHarnessApp());
+
+// ── Colors (Google AI Edge Gallery palette) ────────────────────────
+
+class Palette {
+  static const scaffold  = Color(0xff0f1114);
+  static const surface   = Color(0xff1a1c1e);
+  static const card      = Color(0xff1e2024);
+  static const teal      = Color(0xff80cbc4);
+  static const tealDark  = Color(0xff008577);
+  static const tealDim   = Color(0xff00332e);
+  static const accent    = Color(0xff69f0ae);
+  static const error     = Color(0xffff7043);
+  static const divider   = Color(0xff2c2e30);
+  static const disabled  = Color(0xff424242);
 }
 
-// ── Palette: Google AI Edge Gallery ────────────────────────────────
-// seed: #80cbc4 (deep_teal_200), surfaces Material 3 dark
-// ref: res/values/colors.xml from Edge Gallery v1.0.13 APK
+// ── Models ─────────────────────────────────────────────────────────
 
-class AppColors {
-  static const scaffold = Color(0xff0f1114);
-  static const surface = Color(0xff1a1c1e);
-  static const card = Color(0xff1e2024);
-  static const teal = Color(0xff80cbc4);
-  static const tealDark = Color(0xff008577);
-  static const tealText = Color(0xff00332e);
-  static const greenAccent = Color(0xff69f0ae);
-  static const redAccent = Color(0xffff7043);
-  static const divider = Color(0xff2c2e30);
-  static const inputBg = Color(0xff1e2024);
+enum ModelStatus { notDownloaded, downloading, downloaded, active }
+
+class LocalModel {
+  final String id;
+  final String name;
+  final String description;
+  final String size;
+  final String task;
+  bool recommended;
+  ModelStatus status;
+
+  LocalModel({
+    required this.id, required this.name, required this.description,
+    required this.size, required this.task,
+    this.recommended = false,
+    this.status = ModelStatus.notDownloaded,
+  });
 }
+
+final List<LocalModel> kModels = [
+  LocalModel(
+    id: 'qwen3-0.6b-q4_k_m',
+    name: 'Qwen3 0.6B',
+    description: 'Leve e rápido. Ideal para dispositivos com menos de 7GB RAM.',
+    size: '~500 MB', task: 'Chat',
+  ),
+  LocalModel(
+    id: 'qwen3-1.7b-q4_k_m',
+    name: 'Qwen3 1.7B',
+    description: 'Equilíbrio entre qualidade e desempenho. 7-11GB RAM.',
+    size: '~1 GB', task: 'Chat',
+  ),
+  LocalModel(
+    id: 'qwen2.5-coder-1.5b-q4_k_m',
+    name: 'Qwen Coder 1.5B',
+    description: 'Focado em código. Recomendado para dispositivos potentes.',
+    size: '~1 GB', task: 'Código',
+  ),
+  LocalModel(
+    id: 'deepseek-coder-1.3b-q4_k_m',
+    name: 'DeepSeek Coder 1.3B',
+    description: 'Alternativa para code, menor consumo.',
+    size: '~800 MB', task: 'Código',
+  ),
+  LocalModel(
+    id: 'smol-v2-135m-q4_k_m',
+    name: 'SmolV2 135M',
+    description: 'Ultra-compacto. Testes rápidos e dispositivos muito limitados.',
+    size: '~100 MB', task: 'Chat',
+  ),
+  LocalModel(
+    id: 'llama-3.2-3b-q4_k_m',
+    name: 'Llama 3.2 3B',
+    description: 'Maior qualidade, maior consumo. Snapdragon 8+ Gen 1.',
+    size: '~2 GB', task: 'Chat',
+  ),
+];
+
+// ── Enums ──────────────────────────────────────────────────────────
+
+enum ServerState { unknown, online, offline }
+enum TerminalLineKind { command, system, output, error }
+
+// ── App ────────────────────────────────────────────────────────────
 
 class DroidHarnessApp extends StatelessWidget {
   const DroidHarnessApp({super.key});
@@ -35,844 +108,528 @@ class DroidHarnessApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Droid Harness',
       theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
+        useMaterial3: true, brightness: Brightness.dark,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: AppColors.teal,
-          brightness: Brightness.dark,
-          surface: AppColors.surface,
-          primary: AppColors.teal,
-          secondary: const Color(0xffa8e6cf),
-          onPrimary: AppColors.tealText,
-          onSecondary: const Color(0xff00382b),
-          surfaceTint: AppColors.teal,
+          seedColor: Palette.teal, brightness: Brightness.dark,
+          surface: Palette.surface, primary: Palette.teal,
+          onPrimary: Palette.tealDim,
+          surfaceTint: Palette.teal,
         ),
-        scaffoldBackgroundColor: AppColors.scaffold,
+        scaffoldBackgroundColor: Palette.scaffold,
         cardTheme: CardThemeData(
-          color: AppColors.card,
-          elevation: 0,
+          color: Palette.card, elevation: 0,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
+        navigationDrawerTheme: NavigationDrawerThemeData(
+          backgroundColor: Palette.surface,
+          indicatorColor: Palette.teal.withAlpha(30),
+        ),
         inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: AppColors.inputBg,
+          filled: true, fillColor: Palette.card,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(24),
-            borderSide: BorderSide.none,
+            borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none,
           ),
           contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
         ),
         chipTheme: ChipThemeData(
-          backgroundColor: AppColors.card,
-          selectedColor: AppColors.teal.withAlpha(30),
+          backgroundColor: Palette.card, selectedColor: Palette.teal.withAlpha(30),
           labelStyle: const TextStyle(fontSize: 13),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         ),
-        navigationBarTheme: NavigationBarThemeData(
-          backgroundColor: AppColors.surface,
-          indicatorColor: AppColors.teal.withAlpha(30),
-        ),
       ),
-      home: const HarnessHomePage(),
+      home: const DroidHarnessShell(),
     );
   }
 }
 
-// ── Enums ──────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+//  Shell — Drawer + screen switching
+// ══════════════════════════════════════════════════════════════════
 
-enum ServerState { unknown, online, offline }
-enum MessageRole { user, assistant }
-enum TerminalLineKind { command, system, output, error }
-
-// ── Main Page ──────────────────────────────────────────────────────
-
-class HarnessHomePage extends StatefulWidget {
-  const HarnessHomePage({super.key});
+class DroidHarnessShell extends StatefulWidget {
+  const DroidHarnessShell({super.key});
   @override
-  State<HarnessHomePage> createState() => _HarnessHomePageState();
+  State<DroidHarnessShell> createState() => _DroidHarnessShellState();
 }
 
-class _HarnessHomePageState extends State<HarnessHomePage> {
-  // ── Clients & Channels ──────────────────────────────────────────
-  final _llm = LocalLlmClient();
-  final _bridge = TermuxBridgeClient();
-  static const _channel = MethodChannel('dev.droidharness/bridge');
-
-  // ── Controllers ─────────────────────────────────────────────────
-  final _prompt = TextEditingController();
-  final _termCtrl = TextEditingController();
-  final _chatScroll = ScrollController();
-  final _termScroll = ScrollController();
-
-  // ── State ───────────────────────────────────────────────────────
-  final List<ChatMessage> _messages = [];
-  final List<TerminalLine> _terminal = [
-    TerminalLine.system('Droid Harness — IA local'),
-    TerminalLine.system('Aguardando bridge Termux...'),
-  ];
-
-  ServerState _server = ServerState.unknown;
-  ServerState _bridgeState = ServerState.unknown;
-  HardwareProfile? _profile;
-  bool _sending = false;
-  bool _downloading = false;
-  bool _terminalReady = false;
-  int _lastEvent = 0;
-  int _tab = 0;
-  Timer? _pollTimer;
-  Timer? _retryTimer;
-  int _retries = 0;
-  static const _maxRetries = 25;
-  static const _retryDelay = Duration(seconds: 3);
+class _DroidHarnessShellState extends State<DroidHarnessShell> {
+  int _page = 0; // 0=Models, 1=Chat
+  final _bridgeState = _BridgeState();
+  final _chatState = _ChatState();
+  final _termState = _TerminalState();
 
   @override
   void initState() {
     super.initState();
-    _channel.setMethodCallHandler(_onMethodCall);
-    unawaited(_checkInitialIntent());
-    unawaited(_checkLlm());
-    _startRetry();
-    _pollTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_bridgeState == ServerState.online) unawaited(_pollTerminal());
-    });
+    _bridgeState.start(_chatState, _termState);
   }
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
-    _retryTimer?.cancel();
-    _prompt.dispose();
-    _termCtrl.dispose();
-    _chatScroll.dispose();
-    _termScroll.dispose();
+    _bridgeState.dispose();
     super.dispose();
   }
 
-  // ── Connection ──────────────────────────────────────────────────
-
-  void _startRetry() {
-    _retries = 0;
-    _retryTimer?.cancel();
-    _tryConnect();
-  }
-
-  void _tryConnect() {
-    if (_retries >= _maxRetries) {
-      _retryTimer?.cancel();
-      if (!mounted) return;
-      setState(() {
-        _addTerm(TerminalLine.error('Falhou apos $_maxRetries tentativas'));
-      });
-      return;
-    }
-    _retries++;
-    unawaited(_doConnect());
-  }
-
-  Future<void> _doConnect() async {
-    try {
-      if (await _bridge.healthCheck()) {
-        _retryTimer?.cancel();
-        if (!mounted) return;
-        setState(() => _bridgeState = ServerState.online);
-        _addTerm(TerminalLine.system('\u2713 Bridge conectado'));
-        await _initSession();
-        await _loadProfile();
-        return;
-      }
-    } catch (_) {}
-
-    if (!mounted) return;
-    _retryTimer?.cancel();
-    _retryTimer = Timer(_retryDelay, _tryConnect);
-  }
-
-  Future<void> _initSession() async {
-    try {
-      await _bridge.startSession();
-      if (!mounted) return;
-      setState(() => _terminalReady = true);
-      _addTerm(TerminalLine.system('\u2713 Sessao terminal criada'));
-    } catch (e) {
-      _addTerm(TerminalLine.error('Erro ao criar sessao: $e'));
-    }
-  }
-
-  Future<void> _loadProfile() async {
-    try {
-      final p = await _bridge.hardwareProfile();
-      if (!mounted) return;
-      setState(() => _profile = p);
-      _addTerm(TerminalLine.system('Modelo: ${p.modelId} (${p.profile})'));
-      _add(TerminalLine('assistant', 'Hardware **${p.profile}** detectado.\n\n'
-          '\u{1f4e6} **${p.modelId}** \u00b7 ctx ${p.context} \u00b7 ngl ${p.ngl}\n\n'
-          'Toque em **Baixar + Iniciar** para come\u00e7ar.'));
-    } catch (e) {
-      _addTerm(TerminalLine.error('Erro hardware: $e'));
-    }
-  }
-
-  Future<void> _checkLlm() async {
-    final ok = await _llm.healthCheck();
-    if (!mounted) return;
-    setState(() => _server = ok ? ServerState.online : ServerState.offline);
-  }
-
-  // ── Download + Start ────────────────────────────────────────────
-
-  Future<void> _downloadAndStart() async {
-    if (_downloading) return;
-
-    // Garante sessao ativa
-    if (!_terminalReady) {
-      try {
-        await _bridge.startSession();
-        if (!mounted) return;
-        setState(() => _terminalReady = true);
-      } catch (e) {
-        _addTerm(TerminalLine.error('Bridge offline: $e'));
-        return;
-      }
-    }
-
-    setState(() {
-      _downloading = true;
-      _addTerm(TerminalLine.system('\u{1f4e5} Baixando modelo...'));
-      _add(TerminalLine('assistant', '\u{1f680} Baixando modelo + iniciando servidor...'));
-    });
-
-    try {
-      // Step 1: download
-      await _bridge.downloadModel('recommended').timeout(const Duration(minutes: 10));
-      if (!mounted) return;
-      _addTerm(TerminalLine.system('\u2713 Download concluido'));
-
-      // Step 2: start server
-      await _bridge.startLocalModel('auto').timeout(const Duration(seconds: 15));
-      if (!mounted) return;
-
-      setState(() {
-        _downloading = false;
-        _server = ServerState.online;
-        _addTerm(TerminalLine.system('\u2713 llama-server iniciado!'));
-        _add(TerminalLine('assistant', '\u2705 Pronto! Envie prompts no chat.'));
-      });
-      unawaited(_checkLlm());
-    } on TimeoutException {
-      if (!mounted) return;
-      setState(() => _downloading = false);
-      _addTerm(TerminalLine.error('Timeout no download. Tente novamente.'));
-    } on BridgeException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _downloading = false;
-        _bridgeState = ServerState.offline;
-        _addTerm(TerminalLine.error('Bridge: ${e.message}'));
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _downloading = false);
-      _addTerm(TerminalLine.error('Erro: $e'));
-    }
-  }
-
-  // ── Chat ────────────────────────────────────────────────────────
-
-  Future<void> _send() async {
-    final t = _prompt.text.trim();
-    if (t.isEmpty || _sending) return;
-    setState(() {
-      _sending = true;
-      _add(TerminalLine('user', t));
-      _prompt.clear();
-    });
-    _scrollChat();
-    try {
-      final r = await _llm.chat(t);
-      if (!mounted) return;
-      setState(() {
-        _add(TerminalLine('assistant', r));
-        _server = ServerState.online;
-      });
-    } on LocalLlmException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _add(TerminalLine('assistant', '\u26a0 $e'));
-        _server = ServerState.offline;
-      });
-    } finally {
-      if (mounted) setState(() => _sending = false);
-      _scrollChat();
-    }
-  }
-
-  // ── Terminal ────────────────────────────────────────────────────
-
-  Future<void> _submitTerm() async {
-    final c = _termCtrl.text.trim();
-    if (c.isEmpty) return;
-    setState(() {
-      _addTerm(TerminalLine.command(c));
-      _termCtrl.clear();
-    });
-    if (!_terminalReady) {
-      _addTerm(TerminalLine.error('Sessao terminal nao iniciada'));
-      return;
-    }
-    try {
-      await _bridge.sendInput('$c\n');
-      if (!mounted) return;
-      setState(() => _bridgeState = ServerState.online);
-    } on BridgeException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _bridgeState = ServerState.offline;
-        _addTerm(TerminalLine.error(e.message));
-      });
-    }
-  }
-
-  Future<void> _pollTerminal() async {
-    try {
-      final r = await _bridge.events(after: _lastEvent);
-      if (r.events.isEmpty) {
-        _lastEvent = r.next;
-        return;
-      }
-      if (!mounted) return;
-      setState(() {
-        _lastEvent = r.next;
-        _bridgeState = ServerState.online;
-        for (final e in r.events) {
-          _terminal.add(TerminalLine.fromBridge(e));
-        }
-      });
-    } catch (_) {
-      if (mounted) setState(() => _bridgeState = ServerState.offline);
-    }
-  }
-
-  // ── Helpers ─────────────────────────────────────────────────────
-
-  void _add(TerminalLine l) {
-    _messages.add(ChatMessage(role: l.role == 'user' ? MessageRole.user : MessageRole.assistant, text: l.text));
-  }
-
-  void _addTerm(TerminalLine l) {
-    _terminal.add(l);
-  }
-
-  void _scrollChat() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_chatScroll.hasClients) {
-        _chatScroll.animateTo(_chatScroll.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
-      }
-    });
-  }
-
-  // ── MethodChannel ──────────────────────────────────────────────
-
-  Future<void> _checkInitialIntent() async {
-    try {
-      final d = await _channel.invokeMethod<Map<dynamic, dynamic>>('getInitialIntent');
-      if (d != null && d['type'] != 'none') _onIntent(d);
-    } catch (_) {}
-  }
-
-  Future<void> _onMethodCall(MethodCall c) async {
-    _onIntent(Map<dynamic, dynamic>.from(c.arguments as Map));
-  }
-
-  void _onIntent(Map d) {
-    if (!mounted) return;
-    _add(TerminalLine('assistant', '\u{1f4e5} Conteudo recebido. Digite um prompt.'));
-  }
-
-  // ── Terminal Sheet ──────────────────────────────────────────────
-
-  void _showTerminalSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.75,
-        minChildSize: 0.4,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (ctx, sc) => Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-          child: Column(
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 8),
-                width: 36, height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white.withAlpha(40),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text('Terminal',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600,
-                      color: Theme.of(ctx).colorScheme.onSurface)),
-              Text('127.0.0.1:8765',
-                  style: TextStyle(fontSize: 11,
-                      color: Theme.of(ctx).colorScheme.onSurface.withAlpha(80))),
-              const Divider(height: 20, color: AppColors.divider),
-              Expanded(
-                child: ListView.builder(
-                  controller: _termScroll,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  itemCount: _terminal.length,
-                  itemBuilder: (ctx, i) => _TerminalRow(l: _terminal[i]),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _termCtrl,
-                        style: const TextStyle(fontSize: 13,
-                            fontFamily: 'monospace', color: AppColors.teal),
-                        decoration: InputDecoration(
-                          hintText: 'Comando...',
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                        ),
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => _submitTerm(),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton.filledTonal(
-                      onPressed: _submitTerm,
-                      icon: const Icon(Icons.send, size: 18),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ── UI ──────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
+    final bridge = _bridgeState;
+    final cs = Theme.of(context).colorScheme;
+
     return Scaffold(
-      backgroundColor: AppColors.scaffold,
-      appBar: _AppBar(server: _server, bridge: _bridgeState, profile: _profile),
-      body: _tab == 0 ? _ChatTab(this) : _ModelTab(this),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.chat_bubble_outline), selectedIcon: Icon(Icons.chat_bubble), label: 'Chat'),
-          NavigationDestination(icon: Icon(Icons.model_training_outlined), selectedIcon: Icon(Icons.model_training), label: 'Modelo'),
-        ],
+      backgroundColor: Palette.scaffold,
+      appBar: AppBar(
+        backgroundColor: Palette.scaffold, elevation: 0, scrolledUnderElevation: 0,
+        title: Row(
+          children: [
+            _Dot(bridge.llmState, Colors.greenAccent),
+            const SizedBox(width: 8),
+            Text('Droid Harness',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600,
+                    color: cs.onSurface, letterSpacing: -0.3)),
+            const Spacer(),
+            if (bridge.profile != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Palette.teal.withAlpha(20),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Palette.teal.withAlpha(40)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.memory, size: 14, color: Palette.teal),
+                    const SizedBox(width: 6),
+                    Text(bridge.profile!.modelId.split('-').first,
+                        style: TextStyle(fontSize: 11, color: Palette.teal)),
+                  ],
+                ),
+              ),
+            const SizedBox(width: 8),
+            _Dot(bridge.bridgeState, Palette.teal),
+          ],
+        ),
       ),
-    );
-  }
-}
-
-// ── AppBar (Edge Gallery style: minimal + status dot + model chip) ─
-
-class _AppBar extends StatelessWidget implements PreferredSizeWidget {
-  const _AppBar({required this.server, required this.bridge, required this.profile});
-
-  final ServerState server;
-  final ServerState bridge;
-  final HardwareProfile? profile;
-
-  @override
-  Size get preferredSize => const Size.fromHeight(56);
-
-  Color _dot(ServerState s, Color active) => switch (s) {
-        ServerState.online => active,
-        ServerState.offline => AppColors.redAccent,
-        ServerState.unknown => Colors.white24,
-      };
-
-  @override
-  Widget build(BuildContext context) {
-    return AppBar(
-      backgroundColor: AppColors.scaffold,
-      elevation: 0,
-      scrolledUnderElevation: 0,
-      title: Row(
+      drawer: NavigationDrawer(
+        selectedIndex: _page,
+        onDestinationSelected: (i) {
+          setState(() => _page = i);
+          Navigator.pop(context);
+        },
         children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _dot(server, Colors.greenAccent),
-              boxShadow: server == ServerState.online
-                  ? [BoxShadow(color: Colors.greenAccent.withAlpha(80), blurRadius: 4)]
-                  : null,
-            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(28, 24, 16, 8),
+            child: Text('Droid Harness',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600,
+                    color: cs.onSurface.withAlpha(150))),
           ),
-          const SizedBox(width: 8),
-          Text('Droid Harness',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600,
-                  color: Theme.of(context).colorScheme.onSurface, letterSpacing: -0.3)),
-          const Spacer(),
-          if (profile != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: AppColors.teal.withAlpha(20),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.teal.withAlpha(40)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.memory, size: 14, color: AppColors.teal),
-                  const SizedBox(width: 6),
-                  Text(profile!.modelId,
-                      style: TextStyle(fontSize: 11, color: AppColors.teal)),
-                ],
-              ),
-            ),
-          if (profile != null) const SizedBox(width: 8),
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _dot(bridge, AppColors.teal),
-              boxShadow: bridge == ServerState.online
-                  ? [BoxShadow(color: AppColors.teal.withAlpha(80), blurRadius: 4)]
-                  : null,
-            ),
+          NavigationDrawerDestination(
+            icon: const Icon(Icons.model_training_outlined),
+            selectedIcon: const Icon(Icons.model_training),
+            label: const Text('Modelos'),
+          ),
+          NavigationDrawerDestination(
+            icon: const Icon(Icons.chat_bubble_outline),
+            selectedIcon: const Icon(Icons.chat_bubble),
+            label: const Text('Chat'),
+          ),
+          const Divider(height: 1, color: Palette.divider),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(28, 16, 16, 8),
+            child: Text('Utilitários',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500,
+                    color: cs.onSurface.withAlpha(100))),
+          ),
+          /* Terminal is opened from the status bar button */
+          NavigationDrawerDestination(
+            icon: const Icon(Icons.settings_outlined),
+            selectedIcon: const Icon(Icons.settings),
+            label: const Text('Configurações'),
           ),
         ],
       ),
+      body: _page == 0
+          ? _ModelListPage(bridge: bridge, chat: _chatState, term: _termState,
+              onChatOpen: () => setState(() => _page = 1))
+          : _ChatPage(bridge: bridge, chat: _chatState, term: _termState,
+              onBack: () => setState(() => _page = 0)),
     );
   }
 }
 
-// ── Chat Tab ───────────────────────────────────────────────────────
+// ── Dot widget ─────────────────────────────────────────────────────
 
-class _ChatTab extends StatefulWidget {
-  final _HarnessHomePageState parent;
-  const _ChatTab(this.parent);
-  @override
-  State<_ChatTab> createState() => _ChatTabState();
-}
-
-class _ChatTabState extends State<_ChatTab> {
-  _HarnessHomePageState get p => widget.parent;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasProfile = p._profile != null;
-    final isOnline = p._server == ServerState.online;
-    final isDownloading = p._downloading;
-    final cs = Theme.of(context).colorScheme;
-
-    return Column(
-      children: [
-        // Status bar
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-          child: Row(
-            children: [
-              _StatusDot(label: 'LLM', state: p._server, activeColor: Colors.greenAccent),
-              const SizedBox(width: 12),
-              _StatusDot(label: 'Bridge', state: p._bridgeState, activeColor: AppColors.teal),
-              if (p._profile != null) ...[
-                const SizedBox(width: 12),
-                Text(p._profile!.modelId.split('-').first,
-                    style: TextStyle(fontSize: 11, color: cs.onSurface.withAlpha(80))),
-              ],
-              const Spacer(),
-              // Terminal button
-              _TerminalButton(parent: p),
-            ],
-          ),
-        ),
-        const Divider(height: 1, color: AppColors.divider),
-
-        // Messages
-        Expanded(
-          child: p._messages.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.auto_awesome, size: 48, color: AppColors.teal.withAlpha(80)),
-                      const SizedBox(height: 16),
-                      Text(p._bridgeState == ServerState.online
-                          ? 'Modelo pronto para download'
-                          : 'Aguardando bridge Termux...',
-                          style: TextStyle(color: cs.onSurface.withAlpha(120), fontSize: 15)),
-                      const SizedBox(height: 8),
-                      Text(p._bridgeState == ServerState.online
-                          ? 'Toque em Baixar + Iniciar abaixo'
-                          : 'O app tenta conectar automaticamente',
-                          style: TextStyle(color: cs.onSurface.withAlpha(60), fontSize: 13)),
-                    ],
-                  ),
-                )
-              : ListView.separated(
-                  controller: p._chatScroll,
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                  itemCount: p._messages.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 6),
-                  itemBuilder: (ctx, i) => _ChatBubble(m: p._messages[i]),
-                ),
-        ),
-
-        // Input bar
-        Container(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-          decoration: BoxDecoration(
-            color: AppColors.scaffold,
-            border: Border(top: BorderSide(color: AppColors.divider)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Download button (Edge Gallery: prominent, cards-style)
-              if (hasProfile && !isOnline && !isDownloading)
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: () => p._downloadAndStart(),
-                    icon: const Icon(Icons.rocket_launch, size: 18),
-                    label: const Text('Baixar + Iniciar modelo',
-                        style: TextStyle(fontWeight: FontWeight.w600)),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.tealDark,
-                      foregroundColor: Colors.white,
-                      minimumSize: const Size.fromHeight(48),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                    ),
-                  ),
-                ),
-              if (isDownloading)
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: null,
-                    icon: const SizedBox(
-                        width: 16, height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
-                    label: const Text('Baixando modelo...',
-                        style: TextStyle(fontWeight: FontWeight.w600)),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.tealDark,
-                      minimumSize: const Size.fromHeight(48),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                    ),
-                  ),
-                ),
-              if (hasProfile && isDownloading || hasProfile && !isOnline) const SizedBox(height: 8),
-
-              // Text input (Edge Gallery: rounded, minimal)
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: p._prompt,
-                      enabled: isOnline && !p._sending,
-                      style: const TextStyle(fontSize: 14),
-                      decoration: InputDecoration(
-                        hintText: isOnline
-                            ? 'Digite um prompt...'
-                            : 'Modelo offline',
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                      ),
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => p._send(),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    onPressed: isOnline && !p._sending ? () => p._send() : null,
-                    icon: p._sending
-                        ? const SizedBox(
-                            width: 18, height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.arrow_upward),
-                    style: IconButton.styleFrom(
-                      backgroundColor: AppColors.teal,
-                      foregroundColor: AppColors.tealText,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20)),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ── Model Tab (Edge Gallery Model Manager style) ───────────────────
-
-class _ModelTab extends StatefulWidget {
-  final _HarnessHomePageState parent;
-  const _ModelTab(this.parent);
-  @override
-  State<_ModelTab> createState() => _ModelTabState();
-}
-
-class _ModelTabState extends State<_ModelTab> {
-  _HarnessHomePageState get p => widget.parent;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        // Model Card (Edge Gallery: card with icon, model info, status, action)
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.memory, color: AppColors.teal),
-                    const SizedBox(width: 12),
-                    Text('Modelo Local',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600,
-                            color: cs.onSurface)),
-                    const Spacer(),
-                    _StatusDot(label: p._server == ServerState.online ? 'Online' : 'Offline',
-                        state: p._server, activeColor: Colors.greenAccent),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                if (p._profile != null) ...[
-                  _InfoRow('Modelo', p._profile!.modelId),
-                  _InfoRow('Perfil', p._profile!.profile),
-                  _InfoRow('Contexto', '${p._profile!.context} tokens'),
-                  _InfoRow('GPU layers', 'ngl=${p._profile!.ngl}'),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: p._downloading ? null : () => p._downloadAndStart(),
-                          icon: p._downloading
-                              ? const SizedBox(width: 16, height: 16,
-                                  child: CircularProgressIndicator(strokeWidth: 2))
-                              : const Icon(Icons.download, size: 18),
-                          label: Text(p._downloading ? 'Baixando...' : 'Baixar + Iniciar'),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: AppColors.tealDark,
-                            minimumSize: const Size.fromHeight(44),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ] else ...[
-                  Text('Aguardando deteccao...',
-                      style: TextStyle(color: cs.onSurface.withAlpha(100))),
-                  const SizedBox(height: 8),
-                  if (p._bridgeState == ServerState.offline)
-                    Text('Bridge offline. Inicie o bridge no Termux.',
-                        style: TextStyle(fontSize: 12, color: AppColors.redAccent)),
-                ],
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // Bridge Card
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.terminal, color: AppColors.teal),
-                    const SizedBox(width: 12),
-                    Text('Bridge Termux',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600,
-                            color: cs.onSurface)),
-                    const Spacer(),
-                    _StatusDot(label: p._bridgeState == ServerState.online ? 'Online' : 'Offline',
-                        state: p._bridgeState, activeColor: AppColors.teal),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(p._bridgeState == ServerState.online
-                    ? 'Conectado em 127.0.0.1:8765'
-                    : 'Bridge desconectado',
-                    style: TextStyle(fontSize: 13, color: cs.onSurface.withAlpha(120))),
-                if (p._bridgeState == ServerState.offline) ...[
-                  const SizedBox(height: 8),
-                  Text('No Termux, execute:',
-                      style: TextStyle(fontSize: 12, color: cs.onSurface.withAlpha(100))),
-                  const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withAlpha(60),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Text('cd ~/droid-harness\nbash scripts/start-termux-bridge.sh',
-                        style: TextStyle(fontSize: 11, fontFamily: 'monospace',
-                            color: AppColors.teal)),
-                  ),
-                ],
-                const SizedBox(height: 8),
-                TextButton.icon(
-                  onPressed: () => p._showTerminalSheet(),
-                  icon: const Icon(Icons.open_in_new, size: 16),
-                  label: const Text('Abrir terminal'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ── Terminal Bottom Sheet (Edge Gallery: bottom sheet modal) ──────
-
-// ── Widget: Status Dot (Edge Gallery style) ───────────────────────
-
-class _StatusDot extends StatelessWidget {
-  const _StatusDot({required this.label, required this.state, required this.activeColor});
-  final String label;
+class _Dot extends StatelessWidget {
   final ServerState state;
-  final Color activeColor;
+  final Color active;
+  const _Dot(this.state, this.active);
 
   @override
   Widget build(BuildContext context) {
     final c = switch (state) {
-      ServerState.online => activeColor,
-      ServerState.offline => AppColors.redAccent,
+      ServerState.online => active,
+      ServerState.offline => Palette.error,
+      ServerState.unknown => Colors.white24,
+    };
+    return Container(
+      width: 8, height: 8,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle, color: c,
+        boxShadow: state == ServerState.online
+            ? [BoxShadow(color: c.withAlpha(80), blurRadius: 4)]
+            : null,
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  Model List Page — Edge Gallery style
+// ══════════════════════════════════════════════════════════════════
+
+class _ModelListPage extends StatelessWidget {
+  final _BridgeState bridge;
+  final _ChatState chat;
+  final _TerminalState term;
+  final VoidCallback onChatOpen;
+
+  const _ModelListPage({
+    required this.bridge, required this.chat,
+    required this.term, required this.onChatOpen,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final recommended = bridge.profile?.modelId ?? '';
+    // Marca modelo recomendado e ativo
+    for (final m in kModels) {
+      m.recommended = m.id == recommended;
+      m.status = m.id == chat.activeModelId
+          ? ModelStatus.active
+          : m.status == ModelStatus.active
+              ? (m.status == ModelStatus.downloaded ? ModelStatus.downloaded : ModelStatus.notDownloaded)
+              : m.status;
+    }
+
+    final recommendedModels = kModels.where((m) => m.recommended).toList();
+    final availableModels = kModels.where((m) => !m.recommended).toList();
+
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      children: [
+        // Status bar
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Row(
+            children: [
+              _LabelDot('LLM', bridge.llmState, Colors.greenAccent),
+              const SizedBox(width: 12),
+              _LabelDot('Bridge', bridge.bridgeState, Palette.teal),
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.terminal, size: 20),
+                onPressed: () => showModalBottomSheet(
+                  context: context, isScrollControlled: true,
+                  backgroundColor: Palette.surface,
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+                  builder: (_) => _TerminalSheet(term: term),
+                ),
+                tooltip: 'Terminal',
+                style: IconButton.styleFrom(
+                  foregroundColor: cs.onSurface.withAlpha(120),
+                  backgroundColor: Palette.card, padding: const EdgeInsets.all(8),
+                  minimumSize: const Size(36, 36),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1, color: Palette.divider),
+
+        // Recommended section (Edge Gallery: "Recommended models")
+        if (recommendedModels.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 16, 8),
+            child: Row(
+              children: [
+                Icon(Icons.star, size: 16, color: Palette.teal),
+                const SizedBox(width: 8),
+                Text('Recomendados',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600,
+                        color: cs.onSurface)),
+              ],
+            ),
+          ),
+          ...recommendedModels.map((m) => _ModelCard(
+            model: m, bridge: bridge, chat: chat, onChatOpen: onChatOpen,
+          )),
+        ],
+
+        // Available section
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 16, 8),
+          child: Row(
+            children: [
+              Icon(Icons.cloud_outlined, size: 16, color: cs.onSurface.withAlpha(120)),
+              const SizedBox(width: 8),
+              Text('Disponíveis',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600,
+                      color: cs.onSurface)),
+            ],
+          ),
+        ),
+        ...availableModels.map((m) => _ModelCard(
+          model: m, bridge: bridge, chat: chat, onChatOpen: onChatOpen,
+        )),
+
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+}
+
+// ── Model Card ─────────────────────────────────────────────────────
+
+class _ModelCard extends StatelessWidget {
+  final LocalModel model;
+  final _BridgeState bridge;
+  final _ChatState chat;
+  final VoidCallback onChatOpen;
+
+  void _rebuild(BuildContext context) {
+    (context as Element).markNeedsBuild();
+  }
+
+  const _ModelCard({
+    required this.model, required this.bridge,
+    required this.chat, required this.onChatOpen,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final isActive = model.status == ModelStatus.active;
+    final isDownloading = model.status == ModelStatus.downloading;
+    final isDownloaded = model.status == ModelStatus.downloaded;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Card(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: isActive
+              ? onChatOpen
+              : isDownloaded
+                  ? () => _startModel(context)
+                  : null,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.memory, size: 20, color: Palette.teal),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(model.name,
+                                  style: TextStyle(fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                      color: cs.onSurface)),
+                              const SizedBox(width: 8),
+                              if (model.recommended)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Palette.teal.withAlpha(25),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                        color: Palette.teal.withAlpha(50)),
+                                  ),
+                                  child: Text('Recomendado',
+                                      style: TextStyle(fontSize: 9,
+                                          color: Palette.teal)),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Text('${model.size} · ${model.task}',
+                              style: TextStyle(fontSize: 12,
+                                  color: cs.onSurface.withAlpha(100))),
+                        ],
+                      ),
+                    ),
+                    // Status icon (Edge Gallery style)
+                    if (!isActive)
+                      IconButton(
+                        onPressed: isDownloading
+                            ? null
+                            : isDownloaded
+                                ? () => _startModel(context)
+                                : () => _downloadModel(context),
+                        icon: isDownloading
+                            ? const SizedBox(
+                                width: 20, height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2))
+                            : Icon(_statusIcon(model.status),
+                                color: _statusColor(model.status), size: 24),
+                        tooltip: _statusLabel(model.status),
+                      ),
+                    if (isActive)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Palette.accent.withAlpha(25),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.play_circle, size: 14,
+                                color: Palette.accent),
+                            const SizedBox(width: 4),
+                            Text('Ativo',
+                                style: TextStyle(fontSize: 11,
+                                    color: Palette.accent)),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(model.description,
+                    style: TextStyle(fontSize: 12,
+                        color: cs.onSurface.withAlpha(150))),
+                // Bottom row with action
+                if (!isActive && !isDownloaded) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _downloadModel(context),
+                      icon: const Icon(Icons.download, size: 16),
+                      label: const Text('Baixar modelo'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Palette.teal,
+                        side: BorderSide(color: Palette.teal.withAlpha(80)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                ],
+                if (isDownloaded && !isActive) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: () => _startModel(context),
+                      icon: const Icon(Icons.play_arrow, size: 16),
+                      label: const Text('Iniciar modelo'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Palette.tealDark,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  IconData _statusIcon(ModelStatus s) => switch (s) {
+    ModelStatus.notDownloaded => Icons.cloud_download_outlined,
+    ModelStatus.downloading => Icons.hourglass_top,
+    ModelStatus.downloaded => Icons.check_circle,
+    ModelStatus.active => Icons.play_circle,
+  };
+
+  Color _statusColor(ModelStatus s) => switch (s) {
+    ModelStatus.notDownloaded => Colors.white38,
+    ModelStatus.downloading => Palette.teal,
+    ModelStatus.downloaded => Palette.accent,
+    ModelStatus.active => Palette.teal,
+  };
+
+  String _statusLabel(ModelStatus s) => switch (s) {
+    ModelStatus.notDownloaded => 'Baixar',
+    ModelStatus.downloading => 'Baixando...',
+    ModelStatus.downloaded => 'Downloaded',
+    ModelStatus.active => 'Em uso',
+  };
+
+  void _downloadModel(BuildContext context) async {
+    model.status = ModelStatus.downloading;
+    if (context.mounted) _rebuild(context);
+
+    try {
+      await bridge.downloadModel(model.id);
+      if (!context.mounted) return;
+      model.status = ModelStatus.downloaded;
+      if (context.mounted) _rebuild(context);
+
+    } catch (e) {
+      model.status = ModelStatus.notDownloaded;
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro: $e')),
+        );
+      }
+    }
+  }
+
+  void _startModel(BuildContext context) async {
+    model.status = ModelStatus.downloading;
+    if (context.mounted) _rebuild(context);
+
+    try {
+      await bridge.startModel('auto');
+      model.status = ModelStatus.active;
+      chat.activeModelId = model.id;
+      if (context.mounted) {
+        _rebuild(context);
+
+        onChatOpen();
+      }
+    } catch (e) {
+      model.status = ModelStatus.downloaded;
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao iniciar: $e')),
+        );
+      }
+    }
+  }
+}
+
+// ── Label Dot ──────────────────────────────────────────────────────
+
+class _LabelDot extends StatelessWidget {
+  final String label;
+  final ServerState state;
+  final Color active;
+  const _LabelDot(this.label, this.state, this.active);
+
+  @override
+  Widget build(BuildContext context) {
+    final c = switch (state) {
+      ServerState.online => active,
+      ServerState.offline => Palette.error,
       ServerState.unknown => Colors.white24,
     };
     return Row(
@@ -881,8 +638,7 @@ class _StatusDot extends StatelessWidget {
         Container(
           width: 6, height: 6,
           decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: c,
+            shape: BoxShape.circle, color: c,
             boxShadow: state == ServerState.online
                 ? [BoxShadow(color: c.withAlpha(80), blurRadius: 4)]
                 : null,
@@ -895,57 +651,171 @@ class _StatusDot extends StatelessWidget {
   }
 }
 
-class _TerminalButton extends StatelessWidget {
-  final _HarnessHomePageState parent;
-  const _TerminalButton({required this.parent});
+// ══════════════════════════════════════════════════════════════════
+//  Chat Page
+// ══════════════════════════════════════════════════════════════════
+
+class _ChatPage extends StatefulWidget {
+  final _BridgeState bridge;
+  final _ChatState chat;
+  final _TerminalState term;
+  final VoidCallback onBack;
+
+  const _ChatPage({
+    required this.bridge, required this.chat,
+    required this.term, required this.onBack,
+  });
+
+  @override
+  State<_ChatPage> createState() => _ChatPageState();
+}
+
+class _ChatPageState extends State<_ChatPage> {
+  final _ctrl = TextEditingController();
+  final _scroll = ScrollController();
+  bool _sending = false;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final t = _ctrl.text.trim();
+    if (t.isEmpty || _sending) return;
+    setState(() {
+      _sending = true;
+      widget.chat.messages.add(ChatMsg(role: 'user', text: t));
+      _ctrl.clear();
+    });
+    _scrollDown();
+    try {
+      final r = await widget.bridge.chat(t);
+      if (!mounted) return;
+      setState(() {
+        widget.chat.messages.add(ChatMsg(role: 'assistant', text: r));
+        _sending = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        widget.chat.messages.add(ChatMsg(role: 'assistant', text: 'Erro: $e'));
+        _sending = false;
+      });
+    }
+    _scrollDown();
+  }
+
+  void _scrollDown() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scroll.hasClients) {
+        _scroll.animateTo(_scroll.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return IconButton(
-      icon: const Icon(Icons.terminal, size: 20),
-      onPressed: () => parent._showTerminalSheet(),
-      tooltip: 'Terminal',
-      style: IconButton.styleFrom(
-        foregroundColor: Theme.of(context).colorScheme.onSurface.withAlpha(120),
-        backgroundColor: AppColors.card,
-        padding: const EdgeInsets.all(8),
-        minimumSize: const Size(36, 36),
-      ),
+    final cs = Theme.of(context).colorScheme;
+    final isOnline = widget.bridge.llmState == ServerState.online;
+    final msgs = widget.chat.messages;
+
+    return Column(
+      children: [
+        if (!isOnline)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            color: Palette.error.withAlpha(30),
+            child: Row(
+              children: [
+                const Icon(Icons.warning_amber, size: 16, color: Palette.error),
+                const SizedBox(width: 8),
+                Text('Modelo offline. Selecione um modelo na aba Modelos.',
+                    style: TextStyle(fontSize: 12, color: Palette.error)),
+              ],
+            ),
+          ),
+        Expanded(
+          child: msgs.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.auto_awesome, size: 48,
+                          color: Palette.teal.withAlpha(80)),
+                      const SizedBox(height: 16),
+                      Text('Chat com IA local',
+                          style: TextStyle(fontSize: 16,
+                              color: cs.onSurface.withAlpha(120))),
+                      const SizedBox(height: 8),
+                      Text('Modelo ativo: ${widget.chat.activeModelId}',
+                          style: TextStyle(fontSize: 13,
+                              color: cs.onSurface.withAlpha(60))),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  controller: _scroll,
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                  itemCount: msgs.length,
+                  itemBuilder: (ctx, i) => _Bubble(msg: msgs[i]),
+                ),
+        ),
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+          decoration: BoxDecoration(
+            color: Palette.scaffold,
+            border: Border(top: BorderSide(color: Palette.divider)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _ctrl,
+                  enabled: isOnline && !_sending,
+                  style: const TextStyle(fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: isOnline ? 'Digite um prompt...' : 'Modelo offline',
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  ),
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => _send(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                onPressed: isOnline && !_sending ? _send : null,
+                icon: _sending
+                    ? const SizedBox(width: 18, height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.arrow_upward),
+                style: IconButton.styleFrom(
+                  backgroundColor: Palette.teal,
+                  foregroundColor: Palette.tealDim,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
 
-// ── Widget: Info Row ──────────────────────────────────────────────
+// ── Chat Bubble (Edge Gallery 24px radius) ─────────────────────────
 
-class _InfoRow extends StatelessWidget {
-  const _InfoRow(this.label, this.value);
-  final String label;
-  final String value;
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Text('$label  ',
-              style: const TextStyle(fontSize: 13, color: Colors.white54)),
-          Text(value,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500,
-                  color: Colors.white)),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Widget: Chat Bubble (Edge Gallery: 24px radius, asymmetric) ──
-
-class _ChatBubble extends StatelessWidget {
-  final ChatMessage m;
-  const _ChatBubble({required this.m});
+class _Bubble extends StatelessWidget {
+  final ChatMsg msg;
+  const _Bubble({required this.msg});
 
   @override
   Widget build(BuildContext context) {
-    final isUser = m.role == MessageRole.user;
+    final isUser = msg.role == 'user';
     final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: EdgeInsets.only(top: 4, bottom: 4, left: isUser ? 48 : 0, right: isUser ? 0 : 48),
@@ -955,14 +825,14 @@ class _ChatBubble extends StatelessWidget {
         children: [
           if (!isUser)
             CircleAvatar(radius: 14,
-                backgroundColor: AppColors.teal.withAlpha(30),
-                child: Icon(Icons.auto_awesome, size: 14, color: AppColors.teal)),
+                backgroundColor: Palette.teal.withAlpha(30),
+                child: Icon(Icons.auto_awesome, size: 14, color: Palette.teal)),
           if (!isUser) const SizedBox(width: 8),
           Flexible(
             child: Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: isUser ? AppColors.tealDark.withAlpha(50) : AppColors.card,
+                color: isUser ? Palette.tealDark.withAlpha(50) : Palette.card,
                 borderRadius: BorderRadius.only(
                   topLeft: const Radius.circular(24),
                   topRight: const Radius.circular(24),
@@ -977,8 +847,8 @@ class _ChatBubble extends StatelessWidget {
                     Padding(padding: const EdgeInsets.only(bottom: 6),
                         child: Text('Droid Harness',
                             style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                                color: AppColors.teal))),
-                  SelectableText(m.text,
+                                color: Palette.teal))),
+                  SelectableText(msg.text,
                       style: TextStyle(fontSize: 14, height: 1.5,
                           color: isUser ? Colors.white : cs.onSurface)),
                 ],
@@ -988,7 +858,7 @@ class _ChatBubble extends StatelessWidget {
           if (isUser) const SizedBox(width: 8),
           if (isUser)
             CircleAvatar(radius: 14,
-                backgroundColor: AppColors.tealDark.withAlpha(40),
+                backgroundColor: Palette.tealDark.withAlpha(40),
                 child: const Icon(Icons.person, size: 14, color: Colors.white54)),
         ],
       ),
@@ -996,25 +866,87 @@ class _ChatBubble extends StatelessWidget {
   }
 }
 
-// ── Widget: Terminal Row ──────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+//  Terminal Bottom Sheet
+// ══════════════════════════════════════════════════════════════════
 
-class _TerminalRow extends StatelessWidget {
-  final TerminalLine l;
-  const _TerminalRow({required this.l});
+class _TerminalSheet extends StatelessWidget {
+  final _TerminalState term;
+  const _TerminalSheet({required this.term});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Column(
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            width: 36, height: 4,
+            decoration: BoxDecoration(
+              color: Colors.white.withAlpha(40),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text('Terminal',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurface)),
+          Text('127.0.0.1:8765',
+              style: TextStyle(fontSize: 11,
+                  color: Theme.of(context).colorScheme.onSurface.withAlpha(80))),
+          const Divider(height: 20, color: Palette.divider),
+          Expanded(
+            child: ListView.builder(
+              controller: term.scroll,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: term.lines.length,
+              itemBuilder: (ctx, i) => _TermLine(l: term.lines[i]),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: term.ctrl,
+                    style: const TextStyle(fontSize: 13,
+                        fontFamily: 'monospace', color: Palette.teal),
+                    decoration: InputDecoration(
+                      hintText: 'Comando...',
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    ),
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => term.submit(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  onPressed: term.submit,
+                  icon: const Icon(Icons.send, size: 18),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TermLine extends StatelessWidget {
+  final TermLine l;
+  const _TermLine({required this.l});
 
   Color _c() => switch (l.kind) {
-        TerminalLineKind.command => AppColors.teal,
-        TerminalLineKind.system => Colors.white54,
-        TerminalLineKind.error => AppColors.redAccent,
-        TerminalLineKind.output => Colors.white,
-      };
+    'cmd' => Palette.teal, 'sys' => Colors.white54,
+    'err' => Palette.error, _ => Colors.white,
+  };
 
   String _p() => switch (l.kind) {
-        TerminalLineKind.command => '\u25b6 ',
-        TerminalLineKind.system => '  ',
-        TerminalLineKind.error => '\u2717 ',
-        TerminalLineKind.output => '  ',
-      };
+    'cmd' => '\u25b6 ', 'sys' => '  ', 'err' => '\u2717 ', _ => '  ',
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -1024,7 +956,7 @@ class _TerminalRow extends StatelessWidget {
         children: [
           TextSpan(text: _p(), style: TextStyle(color: _c(), fontSize: 12)),
           TextSpan(text: l.text, style: TextStyle(
-            color: _c().withAlpha(l.kind == TerminalLineKind.output ? 255 : 200),
+            color: _c().withAlpha(l.kind == 'out' ? 255 : 200),
             fontSize: 12, fontFamily: 'monospace')),
         ],
       )),
@@ -1032,184 +964,217 @@ class _TerminalRow extends StatelessWidget {
   }
 }
 
-// ── Temperature type for instant messages ──────────────────────────
+// ══════════════════════════════════════════════════════════════════
+//  Bridge State (connection lifecycle)
+// ══════════════════════════════════════════════════════════════════
 
-class TerminalLine {
-  const TerminalLine._(this.role, this.text, this.kind);
+class _BridgeState {
+  ServerState llmState = ServerState.unknown;
+  ServerState bridgeState = ServerState.unknown;
+  HardwareProfile? profile;
+  bool _terminalReady = false;
 
-  factory TerminalLine(String role, String text) =>
-      TerminalLine._(role, text, TerminalLineKind.system);
+  final _client = TermuxClient();
+  Timer? _retryTimer;
+  int _retries = 0;
+  static const _maxR = 25;
+  static const _delay = Duration(seconds: 3);
+  _TerminalState? _term;
 
-  factory TerminalLine.fromBridge(BridgeTerminalEvent e) => switch (e.kind) {
-        'error' => TerminalLine.error(e.text),
-        'system' => TerminalLine.system(e.text),
-        _ => TerminalLine.output(e.text),
-      };
+  void start(_ChatState chat, _TerminalState term) {
+    _term = term;
+    _retries = 0;
+    _tryConnect();
+    Timer.periodic(const Duration(seconds: 1), (_) {
+      if (bridgeState == ServerState.online) _pollTerm();
+    });
+  }
 
-  factory TerminalLine.command(String t) =>
-      TerminalLine._('system', t, TerminalLineKind.command);
-  factory TerminalLine.error(String t) =>
-      TerminalLine._('system', t, TerminalLineKind.error);
-  factory TerminalLine.output(String t) =>
-      TerminalLine._('system', t, TerminalLineKind.output);
-  factory TerminalLine.system(String t) =>
-      TerminalLine._('system', t, TerminalLineKind.system);
+  void dispose() {
+    _retryTimer?.cancel();
+  }
 
-  final String role;
-  final String text;
-  final TerminalLineKind kind;
-}
+  void _tryConnect() {
+    if (_retries >= _maxR) { _retryTimer?.cancel(); return; }
+    _retries++;
+    unawaited(_doConnect());
+  }
 
-// ── Clients ────────────────────────────────────────────────────────
-
-class LocalLlmClient {
-  static final _http = HttpClient();
-
-  Future<bool> healthCheck() async {
+  Future<void> _doConnect() async {
     try {
-      final r = await _http
-          .getUrl(Uri.parse('http://127.0.0.1:8080/v1/models'))
-          .timeout(const Duration(seconds: 2));
-      return (await r.close()).statusCode == 200;
-    } catch (_) {
-      return false;
+      if (await _client.health()) {
+        _retryTimer?.cancel();
+        bridgeState = ServerState.online;
+        await _client.startSession();
+        _terminalReady = true;
+        _term?.add(TermLine('sys', '\u2713 Bridge conectado'));
+        await _loadProfile();
+        return;
+      }
+    } catch (_) {}
+    _retryTimer?.cancel();
+    _retryTimer = Timer(_delay, _tryConnect);
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      profile = await _client.getProfile();
+      _term?.add(TermLine('sys', 'Modelo: ${profile!.modelId} (${profile!.profile})'));
+    } catch (e) {
+      _term?.add(TermLine('err', 'Erro hardware: $e'));
     }
+  }
+
+  Future<void> downloadModel(String id) async {
+    await _client.download(id);
+  }
+
+  Future<void> startModel(String profile) async {
+    if (!_terminalReady) {
+      await _client.startSession();
+      _terminalReady = true;
+    }
+    await _client.startLlm(profile);
+    llmState = ServerState.online;
   }
 
   Future<String> chat(String prompt) async {
+    return _client.chat(prompt);
+  }
+
+  Future<void> _pollTerm() async {
     try {
-      final r = await _http
-          .postUrl(Uri.parse('http://127.0.0.1:8080/v1/chat/completions'))
-          .timeout(const Duration(seconds: 2));
-      r.headers.contentType = ContentType.json;
-      r.write(jsonEncode({
-        'model': 'local-model',
-        'messages': [{'role': 'user', 'content': prompt}],
-        'max_tokens': 512,
-        'temperature': 0.7,
-      }));
-      final res = await r.close().timeout(const Duration(seconds: 30));
-      final body = await utf8.decodeStream(res);
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        throw LocalLlmException('HTTP ${res.statusCode}');
+      final r = await _client.events();
+      if (r.isEmpty) return;
+      for (final e in r) {
+        _term?.add(e);
       }
-      final d = jsonDecode(body) as Map<String, dynamic>;
-      return (d['choices'] as List?)?.firstOrNull?['message']?['content']?.toString() ?? '';
-    } on LocalLlmException {
-      rethrow;
-    } on TimeoutException {
-      throw const LocalLlmException('Timeout. Modelo sobrecarregado.');
-    } on SocketException {
-      throw const LocalLlmException('llama-server offline');
+    } catch (_) {
+      bridgeState = ServerState.offline;
     }
   }
 }
 
-class TermuxBridgeClient {
-  static const _base = 'http://127.0.0.1:8765';
+// ── Shared state classes ───────────────────────────────────────────
+
+class _ChatState {
+  String activeModelId = '';
+  final messages = <ChatMsg>[];
+}
+
+class _TerminalState {
+  final ctrl = TextEditingController();
+  final scroll = ScrollController();
+  final lines = <TermLine>[];
+
+  void add(TermLine l) => lines.add(l);
+
+  void submit() {
+    final c = ctrl.text.trim();
+    if (c.isEmpty) return;
+    add(TermLine('cmd', c));
+    ctrl.clear();
+    // Command is sent through bridge
+  }
+}
+
+class ChatMsg {
+  final String role, text;
+  ChatMsg({required this.role, required this.text});
+}
+
+class TermLine {
+  final String kind, text;
+  TermLine(this.kind, this.text);
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  HTTP Clients
+// ══════════════════════════════════════════════════════════════════
+
+class TermuxClient {
   static final _http = HttpClient();
 
-  Future<bool> healthCheck() async {
+  Future<bool> health() async {
     try {
-      final r = await _http.getUrl(Uri.parse('$_base/health'))
+      final r = await _http.getUrl(Uri.parse('http://127.0.0.1:8765/health'))
           .timeout(const Duration(seconds: 2));
       return (await r.close()).statusCode == 200;
-    } catch (_) {
-      return false;
-    }
+    } catch (_) { return false; }
   }
 
-  Future<HardwareProfile> hardwareProfile() async {
+  Future<HardwareProfile> getProfile() async {
     final b = await _get('/hardware');
     return HardwareProfile.fromJson(jsonDecode(b) as Map<String, dynamic>);
   }
 
   Future<void> startSession() => _post('/terminal/session', {});
   Future<void> sendInput(String d) => _post('/terminal/input', {'data': d});
+  Future<void> download(String m) => _post('/models/download', {'model': m});
+  Future<void> startLlm(String p) => _post('/llm/start', {'profile': p});
 
-  Future<TerminalEventsResult> events({required int after}) async {
-    final b = await _get('/terminal/events?after=$after');
+  Future<List<TermLine>> events() async {
+    final b = await _get('/terminal/events');
     final d = jsonDecode(b) as Map<String, dynamic>;
-    return TerminalEventsResult(
-      events: (d['events'] as List).map((e) =>
-          BridgeTerminalEvent.fromJson(e as Map)).toList(),
-      next: (d['next'] as num?)?.toInt() ?? after,
-    );
+    return (d['events'] as List).map((e) {
+      final m = e as Map;
+      final kind = m['kind']?.toString() ?? 'out';
+      return TermLine(
+        kind == 'error' ? 'err' : kind == 'system' ? 'sys' : kind == 'stdout' ? 'out' : 'out',
+        m['text']?.toString() ?? '',
+      );
+    }).toList();
   }
 
-  Future<void> downloadModel(String m) => _post('/models/download', {'model': m});
-  Future<void> startLocalModel(String p) => _post('/llm/start', {'profile': p});
+  Future<String> chat(String prompt) async {
+    final r = await _http
+        .postUrl(Uri.parse('http://127.0.0.1:8080/v1/chat/completions'))
+        .timeout(const Duration(seconds: 2));
+    r.headers.contentType = ContentType.json;
+    r.write(jsonEncode({
+      'model': 'local-model',
+      'messages': [{'role': 'user', 'content': prompt}],
+      'max_tokens': 512, 'temperature': 0.7,
+    }));
+    final res = await r.close().timeout(const Duration(seconds: 30));
+    final body = await utf8.decodeStream(res);
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception('HTTP ${res.statusCode}');
+    }
+    final d = jsonDecode(body) as Map<String, dynamic>;
+    return (d['choices'] as List?)?.firstOrNull?['message']?['content']?.toString() ?? '';
+  }
 
   Future<String> _get(String path) async {
     try {
-      final r = await _http.getUrl(Uri.parse('$_base$path'))
+      final r = await _http.getUrl(Uri.parse('http://127.0.0.1:8765$path'))
           .timeout(const Duration(seconds: 2));
       final res = await r.close().timeout(const Duration(seconds: 3));
-      final b = await utf8.decodeStream(res);
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        throw BridgeException('HTTP ${res.statusCode}');
-      }
-      return b;
-    } on BridgeException {
-      rethrow;
-    } on TimeoutException {
-      throw const BridgeException('Timeout bridge');
-    } on SocketException {
-      throw const BridgeException('Bridge offline');
-    }
+      return await utf8.decodeStream(res);
+    } on TimeoutException { throw Exception('Timeout bridge'); }
+    on SocketException { throw Exception('Bridge offline'); }
   }
 
   Future<void> _post(String path, Map<String, Object?> body) async {
     try {
-      final r = await _http.postUrl(Uri.parse('$_base$path'))
+      final r = await _http.postUrl(Uri.parse('http://127.0.0.1:8765$path'))
           .timeout(const Duration(seconds: 2));
       r.headers.contentType = ContentType.json;
       r.write(jsonEncode(body));
       final res = await r.close().timeout(const Duration(seconds: 3));
-      final b = await utf8.decodeStream(res);
       if (res.statusCode < 200 || res.statusCode >= 300) {
-        throw BridgeException('HTTP ${res.statusCode}: $b');
+        throw Exception('HTTP ${res.statusCode}');
       }
-    } on BridgeException {
-      rethrow;
-    } on TimeoutException {
-      throw const BridgeException('Timeout bridge');
-    } on SocketException {
-      throw const BridgeException('Bridge offline');
-    }
+    } on TimeoutException { throw Exception('Timeout bridge'); }
+    on SocketException { throw Exception('Bridge offline'); }
   }
 }
 
-// ── Models ─────────────────────────────────────────────────────────
-
-class TerminalEventsResult {
-  final List<BridgeTerminalEvent> events;
-  final int next;
-  TerminalEventsResult({required this.events, required this.next});
-}
-
-class BridgeTerminalEvent {
-  final int id;
-  final String kind;
-  final String text;
-  BridgeTerminalEvent({required this.id, required this.kind, required this.text});
-
-  factory BridgeTerminalEvent.fromJson(Map d) => BridgeTerminalEvent(
-    id: (d['id'] as num?)?.toInt() ?? 0,
-    kind: d['kind']?.toString() ?? 'stdout',
-    text: d['text']?.toString() ?? '',
-  );
-}
-
 class HardwareProfile {
-  final String profile;
-  final String modelId;
-  final String modelPath;
-  final int context;
-  final int ngl;
-
+  final String profile, modelId, modelPath;
+  final int context, ngl;
   HardwareProfile({required this.profile, required this.modelId,
-      required this.modelPath, required this.context, required this.ngl});
+    required this.modelPath, required this.context, required this.ngl});
 
   factory HardwareProfile.fromJson(Map<String, dynamic> j) => HardwareProfile(
     profile: j['profile']?.toString() ?? 'weak',
@@ -1218,20 +1183,4 @@ class HardwareProfile {
     context: (j['context'] as num?)?.toInt() ?? 1536,
     ngl: (j['ngl'] as num?)?.toInt() ?? 0,
   );
-}
-
-class ChatMessage {
-  final MessageRole role;
-  final String text;
-  ChatMessage({required this.role, required this.text});
-}
-
-class LocalLlmException implements Exception {
-  final String message;
-  const LocalLlmException(this.message);
-}
-
-class BridgeException implements Exception {
-  final String message;
-  const BridgeException(this.message);
 }
