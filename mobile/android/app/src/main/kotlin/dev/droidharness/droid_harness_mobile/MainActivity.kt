@@ -1,82 +1,63 @@
 package dev.droidharness.droid_harness_mobile
 
+import android.app.ActivityManager
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.StatFs
 import android.util.Log
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.BufferedReader
 import java.io.File
+import java.io.FileReader
 
-/**
- * MainActivity — entrada principal do Droid Harness.
- *
- * Estende FlutterActivity com integrações estilo Google:
- * - MethodChannel para comunicar intents recebidos ao Flutter
- * - Tratamento de ACTION_SEND (imagens, texto de outros apps)
- * - Tratamento de deep links (droid-harness://)
- * - Inicialização do foreground service
- */
 class MainActivity : FlutterActivity() {
 
     companion object {
         private const val TAG = "DroidHarness/Main"
         private const val CHANNEL = "dev.droidharness/bridge"
-        private const val ACTION_SHARED_FILE = "dev.droidharness.SHARED_FILE"
-        private const val ACTION_SHARED_TEXT = "dev.droidharness.SHARED_TEXT"
-        private const val ACTION_DEEP_LINK = "dev.droidharness.DEEP_LINK"
     }
 
     private var methodChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-
         methodChannel = MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            CHANNEL
+            flutterEngine.dartExecutor.binaryMessenger, CHANNEL
         )
-
         methodChannel?.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "startBridgeService" -> {
-                    startBridgeForegroundService()
-                    result.success(true)
-                }
-                "stopBridgeService" -> {
-                    stopBridgeForegroundService()
-                    result.success(true)
-                }
-                "getInitialIntent" -> {
-                    val intentData = extractIntentData(intent)
-                    if (intentData != null) {
-                        result.success(intentData)
-                    } else {
-                        result.success(mapOf("type" to "none"))
+            try {
+                when (call.method) {
+                    "getHardwareProfile" -> result.success(hardwareProfile())
+                    "getModelsDir" -> result.success(modelsDir().absolutePath)
+                    "getStorageInfo" -> result.success(storageInfo())
+                    "startBridgeService" -> {
+                        startBridgeForegroundService(); result.success(true)
                     }
+                    "stopBridgeService" -> {
+                        stopBridgeForegroundService(); result.success(true)
+                    }
+                    "getInitialIntent" -> {
+                        val d = extractIntentData(intent)
+                        result.success(d ?: mapOf("type" to "none"))
+                    }
+                    else -> result.notImplemented()
                 }
-                else -> {
-                    result.notImplemented()
-                }
+            } catch (e: Exception) {
+                Log.e(TAG, "MethodChannel error: ${call.method}", e)
+                result.error("ERROR", e.message, null)
             }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Verifica se foi aberto por um intent (compartilhamento, deep link)
         handleIntent(intent)
-
-        // Inicia o foreground service se ainda não estiver rodando
-        // (auto-start após instalação/abertura)
-        try {
-            startBridgeForegroundService()
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not start foreground service", e)
-        }
+        try { startBridgeForegroundService() } catch (_: Exception) {}
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -84,115 +65,148 @@ class MainActivity : FlutterActivity() {
         handleIntent(intent)
     }
 
-    /**
-     * Processa o Intent recebido e envia para o Flutter via MethodChannel.
-     */
-    private fun handleIntent(intent: Intent?) {
-        if (intent == null) return
+    // ── Hardware Detection (Android API) ──────────────────────────
 
-        val data = extractIntentData(intent) ?: return
-        Log.i(TAG, "Handling intent: type=${data["type"]}")
+    private fun hardwareProfile(): Map<String, Any> {
+        val memInfo = ActivityManager.MemoryInfo()
+        (getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)?.let {
+            it.getMemoryInfo(memInfo)
+        }
+        val totalRamMb = memInfo.totalMem / (1024 * 1024)
+        val availRamMb = memInfo.availMem / (1024 * 1024)
+        val cores = Runtime.getRuntime().availableProcessors()
+        val cpuName = readCpuInfo()
+        val gpu = if (hasVulkan()) "vulkan" else "cpu"
+        val arch = System.getProperty("os.arch") ?: ""
 
-        methodChannel?.invokeMethod(
-            data["type"] as String,
-            data
+        // Profile matching (same logic as model-profile.sh)
+        val profile = when {
+            totalRamMb < 7000 || cores <= 4 -> "weak"
+            totalRamMb < 11000 -> "balanced"
+            else -> "strong"
+        }
+
+        val modelId = when (profile) {
+            "weak" -> "gemma-3-1b-q4_k_m"
+            "balanced" -> "qwen3-1.7b-q4_k_m"
+            else -> "qwen2.5-coder-1.5b-q4_k_m"
+        }
+
+        return mapOf(
+            "profile" to profile,
+            "totalRamMb" to totalRamMb,
+            "availRamMb" to availRamMb,
+            "cores" to cores,
+            "cpuName" to cpuName,
+            "gpu" to gpu,
+            "arch" to arch,
+            "recommendedModelId" to modelId,
+            "androidApi" to Build.VERSION.SDK_INT,
+            "device" to "${Build.MANUFACTURER} ${Build.MODEL}",
         )
     }
 
-    /**
-     * Extrai dados do Intent (ACTION_SEND, ACTION_VIEW, etc.)
-     * Retorna null se não houver dados relevantes.
-     */
+    private fun modelsDir(): File {
+        val dir = File(filesDir, "models")
+        dir.mkdirs()
+        return dir
+    }
+
+    private fun storageInfo(): Map<String, Any> {
+        val dir = modelsDir()
+        val stat = StatFs(dir.path)
+        val free = stat.availableBlocksLong * stat.blockSizeLong
+        val total = stat.blockCountLong * stat.blockSizeLong
+        return mapOf(
+            "modelsDir" to dir.absolutePath,
+            "freeBytes" to free,
+            "totalBytes" to total,
+            "freeMb" to free / (1024 * 1024),
+        )
+    }
+
+    private fun readCpuInfo(): String {
+        try {
+            BufferedReader(FileReader("/proc/cpuinfo")).use { reader ->
+                var line = reader.readLine()
+                while (line != null) {
+                    if (line.startsWith("Hardware") || line.startsWith("model name")) {
+                        val parts = line.split(":").map { it.trim() }
+                        if (parts.size >= 2) return parts[1]
+                    }
+                    line = reader.readLine()
+                }
+            }
+        } catch (_: Exception) {}
+        return Build.MODEL
+    }
+
+    private fun hasVulkan(): Boolean {
+        return try {
+            val process = Runtime.getRuntime().exec(
+                arrayOf("sh", "-c", "command -v vulkaninfo 2>/dev/null && vulkaninfo --summary 2>/dev/null || echo no")
+            )
+            val output = process.inputStream.bufferedReader().readText().trim()
+            process.waitFor()
+            output.isNotEmpty() && output != "no"
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    // ── Intent Handling ───────────────────────────────────────────
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent == null) return
+        val data = extractIntentData(intent) ?: return
+        methodChannel?.invokeMethod(data["type"] as String, data)
+    }
+
     private fun extractIntentData(intent: Intent?): Map<String, Any>? {
         if (intent == null) return null
-
         return when (intent.action) {
             Intent.ACTION_SEND -> {
                 if (intent.type?.startsWith("image/") == true) {
-                    // Imagem compartilhada de outro app (Gallery, Camera, etc.)
-                    val imageUri = intent.getParcelableExtra<android.net.Uri>(
+                    val uri = intent.getParcelableExtra<android.net.Uri>(
                         Intent.EXTRA_STREAM
                     )?.toString() ?: return null
-
-                    // Copia para cache local para acesso do Flutter
-                    val cachedUri = copyToCache(imageUri)
-                    mapOf(
-                        "type" to ACTION_SHARED_FILE,
-                        "mimeType" to (intent.type ?: "image/*"),
-                        "uri" to (cachedUri ?: imageUri)
-                    )
+                    mapOf("type" to "SHARED_FILE", "mimeType" to (intent.type ?: "image/*"), "uri" to (copyToCache(uri) ?: uri))
                 } else if (intent.type?.startsWith("text/") == true) {
-                    // Texto compartilhado (navegador, notas, etc.)
                     val text = intent.getStringExtra(Intent.EXTRA_TEXT)
-                        ?: intent.getStringExtra(Intent.EXTRA_SUBJECT)
-                        ?: return null
-                    mapOf(
-                        "type" to ACTION_SHARED_TEXT,
-                        "text" to text
-                    )
-                } else {
-                    null
-                }
+                        ?: intent.getStringExtra(Intent.EXTRA_SUBJECT) ?: return null
+                    mapOf("type" to "SHARED_TEXT", "text" to text)
+                } else null
             }
             Intent.ACTION_VIEW -> {
-                // Deep link (droid-harness://...)
                 val uri = intent.data?.toString() ?: return null
-                mapOf(
-                    "type" to ACTION_DEEP_LINK,
-                    "uri" to uri,
-                    "host" to (intent.data?.host ?: ""),
-                    "path" to (intent.data?.path ?: "")
-                )
+                mapOf("type" to "DEEP_LINK", "uri" to uri, "host" to (intent.data?.host ?: ""), "path" to (intent.data?.path ?: ""))
             }
             else -> null
         }
     }
 
-    /**
-     * Copia uma URI de conteúdo para o cache interno do app,
-     * permitindo que o Flutter a acesse via caminho de arquivo.
-     */
     private fun copyToCache(uriString: String): String? {
         return try {
             val sourceUri = android.net.Uri.parse(uriString)
-            val inputStream = contentResolver.openInputStream(sourceUri) ?: return null
-
-            val cacheDir = File(cacheDir, "shared")
-            cacheDir.mkdirs()
-            val outputFile = File(cacheDir, "shared_${System.currentTimeMillis()}.tmp")
-            outputFile.outputStream().use { output ->
-                inputStream.copyTo(output)
-            }
-            inputStream.close()
-
-            // Retorna content URI via FileProvider para o Flutter acessar
-            val contentUri = FileProvider.getUriForFile(
-                this,
-                "$packageName.fileprovider",
-                outputFile
-            )
-            contentUri.toString()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to cache shared file", e)
-            null
-        }
+            val input = contentResolver.openInputStream(sourceUri) ?: return null
+            val cacheDir = File(cacheDir, "shared").also { it.mkdirs() }
+            val out = File(cacheDir, "shared_${System.currentTimeMillis()}.tmp")
+            out.outputStream().use { o -> input.copyTo(o) }; input.close()
+            FileProvider.getUriForFile(this, "$packageName.fileprovider", out).toString()
+        } catch (e: Exception) { Log.e(TAG, "cache error", e); null }
     }
 
     private fun startBridgeForegroundService() {
-        val serviceIntent = Intent(this, BridgeForegroundService::class.java).apply {
+        val i = Intent(this, BridgeForegroundService::class.java).apply {
             action = BridgeForegroundService.ACTION_START
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(i)
+        else startService(i)
     }
 
     private fun stopBridgeForegroundService() {
-        val serviceIntent = Intent(this, BridgeForegroundService::class.java).apply {
+        startService(Intent(this, BridgeForegroundService::class.java).apply {
             action = BridgeForegroundService.ACTION_STOP
-        }
-        startService(serviceIntent)
+        })
     }
 }
