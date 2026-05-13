@@ -54,18 +54,33 @@ class LocalModel {
 }
 
 final List<LocalModel> kModels = [
+  // ── Recomendados para hardware fraco (Edge Gallery default) ──
+  LocalModel(
+    id: 'gemma-3-1b-q4_k_m',
+    name: 'Gemma 3 1B',
+    description: 'Google Gemma 3. Excelente para mobile. Leve e inteligente.',
+    size: '~700 MB', task: 'Chat',
+  ),
   LocalModel(
     id: 'qwen3-0.6b-q4_k_m',
     name: 'Qwen3 0.6B',
     description: 'Leve e rápido. Ideal para dispositivos com menos de 7GB RAM.',
     size: '~500 MB', task: 'Chat',
   ),
+  // ── Balanced ──
   LocalModel(
     id: 'qwen3-1.7b-q4_k_m',
     name: 'Qwen3 1.7B',
     description: 'Equilíbrio entre qualidade e desempenho. 7-11GB RAM.',
     size: '~1 GB', task: 'Chat',
   ),
+  LocalModel(
+    id: 'smol-v2-135m-q4_k_m',
+    name: 'SmolV2 135M',
+    description: 'Ultra-compacto. Testes rápidos e dispositivos muito limitados.',
+    size: '~100 MB', task: 'Chat',
+  ),
+  // ── Código ──
   LocalModel(
     id: 'qwen2.5-coder-1.5b-q4_k_m',
     name: 'Qwen Coder 1.5B',
@@ -78,11 +93,12 @@ final List<LocalModel> kModels = [
     description: 'Alternativa para code, menor consumo.',
     size: '~800 MB', task: 'Código',
   ),
+  // ── Potentes ──
   LocalModel(
-    id: 'smol-v2-135m-q4_k_m',
-    name: 'SmolV2 135M',
-    description: 'Ultra-compacto. Testes rápidos e dispositivos muito limitados.',
-    size: '~100 MB', task: 'Chat',
+    id: 'gemma-3-4b-q4_k_m',
+    name: 'Gemma 3 4B',
+    description: 'Google Gemma 3 4B. Qualidade superior. 8GB+ RAM.',
+    size: '~2.5 GB', task: 'Chat',
   ),
   LocalModel(
     id: 'llama-3.2-3b-q4_k_m',
@@ -302,9 +318,11 @@ class _ModelListPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final recommended = bridge.profile?.modelId ?? '';
+    final bridgeOnline = bridge.bridgeState == ServerState.online;
+
     // Marca modelo recomendado e ativo
     for (final m in kModels) {
-      m.recommended = m.id == recommended;
+      m.recommended = m.id == recommended && bridgeOnline;
       m.status = m.id == chat.activeModelId
           ? ModelStatus.active
           : m.status == ModelStatus.active
@@ -348,10 +366,42 @@ class _ModelListPage extends StatelessWidget {
         ),
         const Divider(height: 1, color: Palette.divider),
 
-        // Recommended section (Edge Gallery: "Recommended models")
+        // Bridge offline banner (Edge Gallery style warning)
+        if (!bridgeOnline)
+          Container(
+            margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Palette.error.withAlpha(20),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Palette.error.withAlpha(50)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 18, color: Palette.error),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Bridge Termux offline',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                              color: Palette.error)),
+                      const SizedBox(height: 2),
+                      Text('Abra o Termux e execute:\n'
+                          'cd ~/droid-harness && bash scripts/start-termux-bridge.sh',
+                          style: TextStyle(fontSize: 11, color: Palette.error.withAlpha(180))),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+        // Recommended section
         if (recommendedModels.isNotEmpty) ...[
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 16, 8),
+            padding: const EdgeInsets.fromLTRB(20, 16, 16, 8),
             child: Row(
               children: [
                 Icon(Icons.star, size: 16, color: Palette.teal),
@@ -398,14 +448,16 @@ class _ModelCard extends StatelessWidget {
   final _ChatState chat;
   final VoidCallback onChatOpen;
 
-  void _rebuild(BuildContext context) {
-    (context as Element).markNeedsBuild();
-  }
-
   const _ModelCard({
     required this.model, required this.bridge,
     required this.chat, required this.onChatOpen,
   });
+
+  bool get _bridgeOk => bridge.bridgeState == ServerState.online;
+
+  void _rebuild(BuildContext context) {
+    (context as Element).markNeedsBuild();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -515,12 +567,15 @@ class _ModelCard extends StatelessWidget {
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: () => _downloadModel(context),
-                      icon: const Icon(Icons.download, size: 16),
-                      label: const Text('Baixar modelo'),
+                      onPressed: _bridgeOk ? () => _downloadModel(context) : null,
+                      icon: Icon(_bridgeOk ? Icons.download : Icons.cloud_off,
+                          size: 16),
+                      label: Text(_bridgeOk ? 'Baixar modelo' : 'Bridge offline'),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: Palette.teal,
-                        side: BorderSide(color: Palette.teal.withAlpha(80)),
+                        foregroundColor: _bridgeOk ? Palette.teal : Palette.disabled,
+                        side: BorderSide(
+                            color: (_bridgeOk ? Palette.teal : Palette.disabled)
+                                .withAlpha(80)),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),
                       ),
@@ -532,11 +587,14 @@ class _ModelCard extends StatelessWidget {
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
-                      onPressed: () => _startModel(context),
-                      icon: const Icon(Icons.play_arrow, size: 16),
-                      label: const Text('Iniciar modelo'),
+                      onPressed: _bridgeOk ? () => _startModel(context) : null,
+                      icon: Icon(_bridgeOk ? Icons.play_arrow : Icons.cloud_off,
+                          size: 16),
+                      label: Text(_bridgeOk ? 'Iniciar modelo' : 'Bridge offline'),
                       style: FilledButton.styleFrom(
-                        backgroundColor: Palette.tealDark,
+                        backgroundColor: _bridgeOk
+                            ? Palette.tealDark
+                            : Palette.disabled,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),

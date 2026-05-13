@@ -61,6 +61,10 @@ case "${1:-recommended}" in
         ;;
     all)
         echo -e "${YELLOW}→ Downloading ALL models${NC}"
+        download "gemma-3-1b-q4_k_m" "gemma-3-1b-q4_k_m.gguf" \
+            "${HF}/brittlewis12/Gemma-3-1B-it-Q4_K_M-GGUF/resolve/main/gemma-3-1b-it-q4_k_m.gguf"
+        download "gemma-3-4b-q4_k_m" "gemma-3-4b-q4_k_m.gguf" \
+            "${HF}/brittlewis12/Gemma-3-4B-it-Q4_K_M-GGUF/resolve/main/gemma-3-4b-it-q4_k_m.gguf"
         download "smol-v2-135m-q4_k_m" "smol-v2-135m-q4_k_m.gguf" \
             "${HF}/HuggingFaceTB/SmolV2-135M-Instruct-GGUF/resolve/main/smolv2-135m-instruct-q4_k_m.gguf"
         download "deepseek-coder-1.3b-q4_k_m" "deepseek-coder-1.3b-q4_k_m.gguf" \
@@ -73,6 +77,14 @@ case "${1:-recommended}" in
             "${HF}/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
         download "llama-3.2-3b-q4_k_m" "llama-3.2-3b-q4_k_m.gguf" \
             "${HF}/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf"
+        ;;
+    gemma|gemma-3-1b-q4_k_m)
+        download "gemma-3-1b-q4_k_m" "gemma-3-1b-q4_k_m.gguf" \
+            "${HF}/brittlewis12/Gemma-3-1B-it-Q4_K_M-GGUF/resolve/main/gemma-3-1b-it-q4_k_m.gguf"
+        ;;
+    gemma-4b|gemma-3-4b-q4_k_m)
+        download "gemma-3-4b-q4_k_m" "gemma-3-4b-q4_k_m.gguf" \
+            "${HF}/brittlewis12/Gemma-3-4B-it-Q4_K_M-GGUF/resolve/main/gemma-3-4b-it-q4_k_m.gguf"
         ;;
     qwen|qwen3-1.7b-q4_k_m)
         download "qwen3-1.7b-q4_k_m" "Qwen3-1.7B-Q4_K_M.gguf" \
