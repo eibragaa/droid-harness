@@ -26,6 +26,15 @@ By the end of this guide, your Android phone will:
 - Be controllable via **web dashboards** and **CLI**
 - Operate completely offline (local models) or hybrid (API + local)
 
+### Mobile Companion App
+
+This repo now includes a Flutter companion app in [`mobile/`](mobile/). It gives
+the Droid Harness stack a phone-native control surface for local AI prompts,
+`llama-server` health checks, and terminal command presets. See
+[`docs/mobile-app-mvp.md`](docs/mobile-app-mvp.md) for the app architecture and
+the Termux bridge design. The current implementation/status log is in
+[`docs/status-2026-05-12.md`](docs/status-2026-05-12.md).
+
 ---
 
 ## Device Requirements
