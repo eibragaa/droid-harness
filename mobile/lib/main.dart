@@ -542,12 +542,18 @@ class _ModelCardState extends State<_ModelCard> {
       _totalBytes = response.contentLength;
       if (_totalBytes <= 0) _totalBytes = 1;
 
+      // Download binário direto (GGUF é binário)
       final sink = tempFile.openWrite();
-      sink.close();
-
-      // Na verdade, precisamos de download binário. Vou usar HttpClient
-      // com stream de bytes direto.
-      await _downloadBinary(response, file, tempFile);
+      _downloadedBytes = 0;
+      await for (final chunk in response) {
+        sink.add(chunk);
+        _downloadedBytes += chunk.length;
+        if (_totalBytes > 0 && mounted) {
+          setState(() => m.progress = _downloadedBytes / _totalBytes);
+        }
+      }
+      await sink.close();
+      await tempFile.rename(file.path);
 
       if (mounted) {
         setState(() {
@@ -563,23 +569,6 @@ class _ModelCardState extends State<_ModelCard> {
         );
       }
     }
-  }
-
-  Future<void> _downloadBinary(
-      HttpClientResponse response, File file, File tempFile) async {
-    final sink = tempFile.openWrite();
-    _downloadedBytes = 0;
-    _totalBytes = response.contentLength;
-
-    await for (final chunk in response) {
-      sink.add(chunk);
-      _downloadedBytes += chunk.length;
-      if (_totalBytes > 0 && mounted) {
-        setState(() => m.progress = _downloadedBytes / _totalBytes);
-      }
-    }
-    await sink.close();
-    await tempFile.rename(file.path);
   }
 
   Future<void> _start() async {
