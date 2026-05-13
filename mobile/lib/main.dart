@@ -422,6 +422,7 @@ class _ModelCard extends StatefulWidget {
 }
 
 class _ModelCardState extends State<_ModelCard> {
+  static const _shell = MethodChannel('dev.droidharness/bridge');
   LocalModel get m => widget.model;
   HttpClient? _downloadClient;
   int _downloadedBytes = 0;
@@ -518,25 +519,34 @@ class _ModelCardState extends State<_ModelCard> {
   }
 
   Future<void> _start() async {
-    if (!widget.bridge.bridgeOk) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Bridge offline. Inicie no Termux primeiro.')),
-      );
-      return;
-    }
     m.status = ModelStatus.downloading;
+    if (mounted) setState(() {});
     try {
-      // Bridge precisa saber onde está o modelo
-      await widget.bridge.client.startLlm('auto');
-      m.status = ModelStatus.active;
-      widget.onChat();
-      if (mounted) setState(() {});
+      // Tenta iniciar direto via Kotlin (subprocesso do app)
+      final modelPath = '${widget.modelsDir}/${m.id}/${m.id}.gguf';
+      final result = await _shell.invokeMethod<Map<dynamic, dynamic>>(
+        'startLlm', {'modelPath': modelPath});
+      if (result != null && result['ok'] == true) {
+        m.status = ModelStatus.active;
+        widget.onChat();
+        if (mounted) setState(() {});
+      } else {
+        final error = result?['error']?.toString() ?? 'Erro desconhecido';
+        m.status = ModelStatus.downloaded;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(error)),
+          );
+          setState(() {});
+        }
+      }
     } catch (e) {
       m.status = ModelStatus.downloaded;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao iniciar: $e')),
+          SnackBar(content: Text('Erro: $e')),
         );
+        setState(() {});
       }
     }
   }
@@ -641,14 +651,11 @@ class _ModelCardState extends State<_ModelCard> {
                       )
                     : m.status == ModelStatus.downloaded
                         ? FilledButton.icon(
-                            onPressed: widget.bridge.bridgeOk ? _start : null,
-                            icon: Icon(widget.bridge.bridgeOk
-                                ? Icons.play_arrow : Icons.cloud_off, size: 16),
-                            label: Text(widget.bridge.bridgeOk
-                                ? 'Iniciar modelo' : 'Bridge offline'),
+                            onPressed: _start,
+                            icon: const Icon(Icons.play_arrow, size: 16),
+                            label: const Text('Iniciar modelo'),
                             style: FilledButton.styleFrom(
-                              backgroundColor: widget.bridge.bridgeOk
-                                  ? Palette.tealDark : Palette.disabled,
+                              backgroundColor: Palette.tealDark,
                               foregroundColor: Colors.white,
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12)),
