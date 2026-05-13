@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Caminho para arquivos em cache que o app compartilha -->
+    <cache-path name="cache" path="." />
+    <!-- Caminho para arquivos internos do app -->
+    <files-path name="internal" path="." />
+    <!-- Caminho para modelos baixados (mapeado no Termux) -->
+    <external-path name="downloads" path="Download/" />
+</paths>

@@ -30,6 +30,7 @@ pkg install -y proot-distro git curl wget python nodejs-lts \
 # ── Step 2: Wake lock ────────────────────────────────────────────
 echo -e "${YELLOW}[3/6] Acquiring wake lock...${NC}"
 termux-wake-lock 2>/dev/null || true
+mkdir -p "${DROID_HARNESS_MODELS_DIR:-$HOME/droid-harness/models/offline}"
 
 # ── Step 3: Install Ubuntu ───────────────────────────────────────
 echo -e "${YELLOW}[4/6] Installing Ubuntu (proot-distro)...${NC}"
@@ -118,5 +119,8 @@ echo -e "  ${CYAN}→${NC} Enter Ubuntu:     ${GREEN}proot-distro login ubuntu${
 echo -e "  ${CYAN}→${NC} Read the docs:    ${GREEN}cat ~/droid-harness/README.md${NC}"
 echo -e "  ${CYAN}→${NC} Go to harnesses:  ${GREEN}cd ~/droid-harness/harnesses/${NC}"
 echo -e "  ${CYAN}→${NC} Build llama.cpp:  ${GREEN}bash ~/droid-harness/llama-portable/build-termux.sh${NC}"
+echo -e "  ${CYAN}→${NC} Offline models:   ${GREEN}~/droid-harness/models/offline${NC}"
+echo -e "  ${CYAN}→${NC} Detect model:      ${GREEN}bash ~/droid-harness/scripts/model-profile.sh${NC}"
+echo -e "  ${CYAN}→${NC} Auto boot:         ${GREEN}bash ~/droid-harness/scripts/install-termux-boot.sh${NC}"
 echo -e ""
 echo -e "${YELLOW}  📱 Your phone is now an AI coding workstation.${NC}"

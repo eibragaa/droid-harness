@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import pty
+import shlex
 import select
 import signal
 import subprocess
@@ -143,6 +144,10 @@ class TerminalSession:
 
 
 SESSION = TerminalSession()
+PROJECT_DIR = os.environ.get(
+    "DROID_HARNESS_HOME",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
+)
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
@@ -157,8 +162,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     "termux": os.path.exists("/data/data/com.termux/files/usr"),
                     "cwd": os.getcwd(),
                     "terminal": SESSION.status(),
+                    "hardware": hardware_profile(),
                 }
             )
+            return
+
+        if parsed.path == "/hardware":
+            self._json(hardware_profile())
             return
 
         if parsed.path == "/terminal/events":
@@ -188,8 +198,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return
 
             if parsed.path == "/llm/start":
-                profile = str(body.get("profile", "default"))
+                profile = str(body.get("profile", "auto"))
                 command = llm_command(profile)
+                self._json(SESSION.write(command + "\n"))
+                return
+
+            if parsed.path == "/models/download":
+                model = str(body.get("model", "recommended"))
+                command = download_command(model)
                 self._json(SESSION.write(command + "\n"))
                 return
         except Exception as error:  # noqa: BLE001 - HTTP boundary reports errors.
@@ -219,17 +235,96 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 
 def llm_command(profile: str) -> str:
-    model = os.environ.get(
-        "DROID_HARNESS_MODEL",
-        "$HOME/models/qwen-coder-1.5b-q4_k_m.gguf",
+    detected = hardware_profile()
+    model = os.environ.get("DROID_HARNESS_MODEL") or str(detected["model_path"])
+    ngl = str(detected["ngl"])
+    context = str(detected["context"])
+    batch = str(detected["batch"])
+    ubatch = str(detected["ubatch"])
+
+    if profile == "weak":
+        ngl, context, batch, ubatch = "0", "1536", "32", "32"
+    elif profile == "lowram":
+        context, batch, ubatch = "2048", "64", "64"
+
+    quoted_model = shlex.quote(model)
+    return (
+        f"llama-server -m {quoted_model} --host 127.0.0.1 --port 8080 "
+        f"-ngl {ngl} -c {context} -b {batch} -ub {ubatch} --no-mmap"
     )
-    base = (
-        f"llama-server -m {model} --host 127.0.0.1 --port 8080 "
-        "-ngl 99 --mlock --no-mmap"
-    )
-    if profile == "lowram":
-        return f"{base} -c 2048 -b 64 -ub 64"
-    return f"{base} -c 4096"
+
+
+def download_command(model: str) -> str:
+    allowed = {
+        "recommended",
+        "all",
+        "qwen",
+        "qwen-tiny",
+        "qwen-coder",
+        "gemma",
+        "llama",
+        "deepseek",
+        "smol",
+    }
+    selected = model if model in allowed else "recommended"
+    script = os.path.join(PROJECT_DIR, "llama-portable", "download-models.sh")
+    return f"bash {shlex.quote(script)} {shlex.quote(selected)}"
+
+
+def hardware_profile() -> dict[str, Any]:
+    script = os.path.join(PROJECT_DIR, "scripts", "model-profile.sh")
+    fallback = {
+        "profile": "weak",
+        "models_dir": os.path.join(PROJECT_DIR, "models", "offline"),
+        "model_id": "qwen3-0.6b-q4_k_m",
+        "model_path": os.path.join(
+            PROJECT_DIR,
+            "models",
+            "offline",
+            "qwen3-0.6b-q4_k_m",
+            "qwen3-0.6b-q4_k_m.gguf",
+        ),
+        "context": 1536,
+        "batch": 32,
+        "ubatch": 32,
+        "ngl": 0,
+    }
+    if not os.path.exists(script):
+        return fallback
+
+    try:
+        output = subprocess.check_output(
+            ["sh", script, "--shell"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=4,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return fallback
+
+    values: dict[str, str] = {}
+    for line in output.splitlines():
+        if "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        values[key] = raw_value.strip().strip("'")
+
+    return {
+        "profile": values.get("DROID_HARNESS_PROFILE", fallback["profile"]),
+        "models_dir": values.get("DROID_HARNESS_MODELS_DIR", fallback["models_dir"]),
+        "model_id": values.get(
+            "DROID_HARNESS_RECOMMENDED_MODEL_ID",
+            fallback["model_id"],
+        ),
+        "model_path": values.get(
+            "DROID_HARNESS_RECOMMENDED_MODEL",
+            fallback["model_path"],
+        ),
+        "context": int(values.get("DROID_HARNESS_CONTEXT", fallback["context"])),
+        "batch": int(values.get("DROID_HARNESS_BATCH", fallback["batch"])),
+        "ubatch": int(values.get("DROID_HARNESS_UBATCH", fallback["ubatch"])),
+        "ngl": int(values.get("DROID_HARNESS_NGL", fallback["ngl"])),
+    }
 
 
 def main() -> None:
